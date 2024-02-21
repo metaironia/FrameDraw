@@ -48,6 +48,9 @@ Interrupt09h	proc
 
 		je HotkeyPressed	; if F1 was pressed
 
+		cmp al, 3bh + 80h	; if F1 was released 
+		je HotkeyPressed
+
 		jmp HotkeyNotPressed
 
 HotkeyPressed:	push 0b800h		; vram
