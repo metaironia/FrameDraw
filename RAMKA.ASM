@@ -1,36 +1,182 @@
-.model tiny
-.code
-.286
-org 100h									
-
-Start:		cld
-		call CmdArgsScan
+RamkaAAA	proc
 		
-		push dx		; saving text addr
+		cld
 
+		push bp
+		mov bp, sp
+
+		push cs
+		pop ds		; ds = cs
+	
+		mov bl, FrameHeight
+		mov bh, FrameWidth
+		mov dh, FrameColor
+		mov si, FrameStyleAddr
+		mov di, FrameTextAddr		
+
+		push di			; saving text addr in di
+	
 		mov di, 0b800h
-		mov es, di
-		
+		mov es, di		; es = seg addr vram
+	
 		xor di, di
-
-		push di		
 		call ShadowFrameDraw
-		pop di
 
+		xor di, di
 		call FrameDraw
-		
-		pop dx		; TextDraw requires text addr in dl
-		xor di, di      ; di = very beginning of vram
+
+		pop si			; TextDraw requires text addr in si	
+		push bx			; saving original width
+
+		xor di, di      	; di = very beginning of vram
+
+		call CenterDI
+
+		mov bh, 4d 		; bh = 4 for output of register's name 
 
 		call TextDraw
 
-		mov ax, 4c00h
-		int 21h 
+		pop bx			; popping original width
+		
+		xor di, di
+		call CenterDI		
+		
+		add di, 160d    	; di = new line
+		add di, 8d		; offset to print registers
+
+		mov cx, 13d		; 13 registers
+
+		add bp, 4d		; bp = pos to ax register in stack
+
+RegisterOutput:	mov ax, [bp]
+
+		call RegisterDraw
+
+		inc bp
+		inc bp
+
+		loop RegisterOutput
+
+		pop bp
+
+		ret
+		
+		endp 
+
+;--------------------------
+; CmdArgsVarsSet
+; Entry: -
+; Return: - (set frame settings variables)  
+;--------------------------
+
+CmdArgsVarsSet	proc
+
+		call CmdArgsScan
+		
+		mov FrameHeight, bl
+		mov FrameWidth, bh
+		
+		mov FrameColor, dh
+
+		mov FrameStyleAddr, si
+		mov FrameTextAddr, di  
+		
+		ret
+
+		endp
+
+
+;--------------------------
+; CenterDI
+; Entry: di = vram pos
+; Return: centered di
+;--------------------------
+
+CenterDI	proc
+
+		push dx			 ; saving dx
+
+		xor dh, dh
+		call VerticalCentering
+		call HorizontalCentering ; dl = horizontal offset
+
+		add di, dx		 ; di is now centered
+		
+		pop dx			 ; popping dx
+
+		ret
+
+		endp
+
+;-----------------------
+; RegisterDraw
+; Entry: di = current vram pos, ax = register to print, dh = color attr
+; Assumes: es = 0b800h
+;-----------------------
+
+RegisterDraw	proc
+
+		push ax ax ax ax	; saving ax
+
+		and ax, 0f000h		; mask to first number
+		shr ax, 12d 		; now that number is the last
+			
+		call PrintNumToAscii
+
+		pop ax
+		and ax, 0f00h		; mask to second number		
+		shr ax, 8d		; now that number is the last
+		
+		call PrintNumToAscii
+
+		pop ax
+		and ax, 00f0h		; mask to third number		
+		shr ax, 4d		; now that number is the last
+
+		call PrintNumToAscii
+
+		pop ax
+		and ax, 000fh		; mask to number byte		
+
+		call PrintNumToAscii
+
+		pop ax			; popping ax
+
+		add di, 160d		; di = new line
+		sub di, 8d		; di = 4 lines left prev pos
+
+		ret
+		
+		endp
+
+;-----------------------------
+; PrintNumToAscii
+; Entry: ax = number from 0 to F, di = current pos to print, dh = color attr
+; Assumes: es = 0b800h
+; Destructs: ax
+;-----------------------------
+
+PrintNumToAscii	proc	
+		
+		mov si, offset RegisterString
+		add si, ax			; si = addr to number
+
+		lodsb				; al = ascii code of number	
+	
+		mov ah, dh			; ah = color attr		
+
+		stosw
+
+		ret
+
+		endp
+
+RegisterString	db '0123456789ABCDEF'
+
 
 ;-------------------------
 ; TextDraw
-; Entry:    dl = text address, bh = width 
-; Assumes:  di is very beginning of vram 
+; Entry:    si = text address, bh = width, dh = color attr  
 ; Return:   -
 ; Destruct: si, dh
 ;-------------------------
@@ -40,26 +186,21 @@ TextDraw	proc
 		push dx      ; saving text address in dl and color attr in dh
 
 		xor dx, dx
-
-		call VerticalCentering
-		call HorizontalCentering
 		
 		add di, dx   ; di += horizontal offset
 
 		pop dx	     ; popping text address in dl and color attr in dh 
 
-		add di, 2    ; one line right of top-left frame corner
+		add di, 2d    ; one line right of top-left frame corner
 
-		mov ah, dh   ; saving color attr in ah
+		mov ah, dh   ; ah = color attr
 
-		xor dh, dh
-		mov si, dx   ; si = text address
 
-NextString:	add di, 160  ; di += new line
+NextString:	add di, 160d  ; di += new line
 
 		xor ch, ch
 		mov cl, bh  
-		sub cx, 2    ; cx = width - 2
+		sub cx, 2d    ; cx = width - 2
 
 		push cx      ; saving width - 2 in stack 
 
@@ -90,32 +231,49 @@ TextInterlaceEnd:
 
 ;------------------------
 ; ShadowFrameDraw
-; Entry: di in stack
+; Entry: -
 ; Return: -
+; Destructs: ax, cx, di
 ;------------------------
 
 ShadowFrameDraw		proc
-			
-			push bp
-			mov bp, sp      ; bp-chain
-			
-			mov di, [bp+4]
-			
-			push si         ; saving offset to StylesString
-			push dx		; saving color attr of real frame in dh
 
-			mov si, offset ShadowStyle
-			mov dh, 10h	; dh = blue color attr
+			call CenterDI
 
-			add di, 82      ; one lines below and one line right
-					; real frame 
-			call FrameDraw
+			add di, 2d	; di = one line right of right border 
 			
-			pop dx
-			pop si
-			
-			pop bp
-		
+			mov cl, bh
+			xor ch, ch	; cx = frame width
+
+			push cx		; saving frame width in stack
+
+			shl cx, 1	; cx *= 2 because of color attr
+			add di, cx	; di = right border pos
+
+			mov cl, bl	; cx = border height
+
+			mov al, 0	; no symbol to print
+			mov ah, 10h	; blue background color attr 
+
+VerticalShadowDraw:	add di, 158d	; di = new line same column
+
+			call SingleCharDraw
+
+			loop VerticalShadowDraw
+	
+			pop cx		; popping frame width from stack
+
+			push cx		; saving frame width
+			shl cx, 1	; cx *= 2 because of color attr
+
+			sub di, cx	; get back to left frame border 
+
+			pop cx		; cx = width for cycle			
+
+HorizontalShadowDraw:	call SingleCharDraw
+
+			loop HorizontalShadowDraw
+
 			ret
 			
 			endp
@@ -124,12 +282,16 @@ ShadowFrameDraw		proc
 ; CmdArgsScan
 ; Entry: -
 ; Return: -
+; Destruct: ax
 ;------------------------
 
 CmdArgsScan	proc
-				
-		mov cl, ds:[80h] ; cx = length of cmd args
-		mov di, 81h	 ; di = offset to first arg
+		
+		mov ax, offset CmdArgsStringEnd	
+		mov cx, offset CmdArgsString
+		sub cx, ax	 ; cx = length of cmd args 
+
+		mov di, offset CmdArgsString ; di = offset to first arg
 
 		call SizeScan    ; first scan for width
 		mov bl, bh	 ; bl = width
@@ -141,7 +303,7 @@ CmdArgsScan	proc
 		
 		call StyleScan   ; style addr in si
 
-		call TextScan    ; text addr in dl
+		call TextScan    ; text addr in di
 		
 		ret
 
@@ -150,35 +312,13 @@ CmdArgsScan	proc
 ;--------------------------
 ; TextScan
 ; Entry: di = curr pos
-; Return: addr of text in dl
-; Destruct: al
+; Return: addr of text in di
+; Destruct:
 ;--------------------------
 
 TextScan	proc
 
 		call SpacesSkip
-
-		push bx	       ; saving bx
-		push si	       ; saving si
-
-		mov si, 80h    ; si = address of cmd args length
-
-		mov bx, [si]   
-		xor bh, bh     ; bx = length of cmd args
-					
-		add bx, 81h    ; bx = addr of cmd args end, 
-			       ; 81h = addr of cmd args beginning
-		
-		mov byte ptr [bx], '$'  ; text ends by $ 
-		
-		mov al, dh     ; saving dh in al
-
-		mov dx, di  
-		mov dh, al     ; dl = text addr,
-			       ; possible because text addr < 8bit
-
-		pop si	       ; popping si
-		pop bx	       ; popping bx
 
 		ret
 		
@@ -196,7 +336,7 @@ SpacesSkip	proc
 		mov al, 20h	; 20h = space ascii character		
 		repe scasb
 		
-		sub di, 1
+		dec di
 
 		ret
 		
@@ -214,22 +354,23 @@ StyleScan	proc
 		call SpacesSkip	
 	
 		mov si, di
-		mov al, 2ah   ; 2ah = * in ascii 
+		mov al, 2ah  	  ; 2ah = * in ascii 
 						
 		scasb	      
 
 		jne DefaultStyle  ; if not eq *, turns on user's style
 
 		inc si
-
+		add di, 9	  ; di = pos after user's symbols style
+		
 		jmp StyleScanEnd
 
 DefaultStyle:	lodsb
 		
-		sub al, '0'	    ; al = digit
+		sub al, '0'       ; al = digit
 		 
-		mov ah, 9	    ; in style 9 chars
-		mul ah		    ; ax = offset to style
+		mov ah, 9         ; in style 9 chars
+		mul ah	          ; ax = offset to style
 		
 		mov si, ax 		    ;
 		add si, offset StringsStyle ; set addr of style chars				
@@ -488,7 +629,24 @@ SingleCharDrawEnd:
 StringsStyle	db '+-+| |+-+' ; first style
 		db 'ÉÍ»º ºÈÍ¼' ; second style
 
-ShadowStyle  	db '         ' 
+FrameWidth	db 0
+FrameHeight	db 0
+FrameColor	db 0
+FrameStyleAddr	dw 0
+FrameTextAddr	dw 0
 
-end 		Start
-
+CmdArgsString	db ' 9 15 4e 1 '
+		db 'ax'
+		db 'bx'
+		db 'cx'
+		db 'dx'
+		db 'si'
+		db 'di'
+		db 'ds'
+		db 'es'
+		db 'ss'
+		db 'bp'
+		db 'sp'
+		db 'ip'
+		db 'cs$'
+CmdArgsStringEnd:	       ; for args length	
